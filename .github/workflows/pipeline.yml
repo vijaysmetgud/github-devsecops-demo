@@ -2,7 +2,7 @@ name: DevSecOps Pipeline with Monitoring
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
 
 jobs:
 
@@ -10,44 +10,68 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
 
     steps:
-      - uses: actions/checkout@v3
+    - uses: actions/checkout@v3
 
-      # ----------------------------
-      # Install System Dependencies
-      # ----------------------------
-      - name: Install Required System Packages
-        run: |
+    # -------------------------------
+    # SMART SYSTEM TOOL INSTALLATION
+    # -------------------------------
+    - name: Ensure Required Tools Installed
+      run: |
+        if ! command -v python3 &> /dev/null; then
+          echo "Installing python3..."
           sudo apt update
-          sudo apt install -y python3 python3-pip docker.io curl
+          sudo apt install -y python3
+        else
+          echo "python3 already installed"
+        fi
 
-      - name: Fix Docker Permissions
-        run: |
-          sudo usermod -aG docker $USER || true
-          sudo systemctl restart docker || true
+        if ! command -v pip3 &> /dev/null; then
+          echo "Installing python3-pip..."
+          sudo apt update
+          sudo apt install -y python3-pip
+        else
+          echo "pip3 already installed"
+        fi
 
-      - name: Verify Tools
-        run: |
-          python3 --version
-          pip3 --version
-          docker --version
+        if ! command -v docker &> /dev/null; then
+          echo "Installing docker..."
+          sudo apt update
+          sudo apt install -y docker.io
+          sudo usermod -aG docker $USER
+          sudo systemctl restart docker
+        else
+          echo "docker already installed"
+        fi
 
-      # ----------------------------
-      # Python Setup
-      # ----------------------------
-      - name: Upgrade pip
-        run: |
-          python3 -m ensurepip --upgrade || true
-          python3 -m pip install --upgrade pip
+        if ! command -v helm &> /dev/null; then
+          echo "Installing helm..."
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+        else
+          echo "helm already installed"
+        fi
 
-      - name: Install Application Dependencies
-        run: |
-          cd app
-          python3 -m pip install -r requirements.txt
+    - name: Verify Versions
+      run: |
+        python3 --version
+        pip3 --version
+        docker --version
+        helm version
 
-      - name: Compile Check
-        run: |
-          cd app
-          python3 -m py_compile app.py
+    # -------------------------------
+    # PYTHON DEPENDENCIES
+    # -------------------------------
+    - name: Upgrade pip
+      run: python3 -m pip install --upgrade pip
+
+    - name: Install Application Dependencies
+      run: |
+        cd app
+        python3 -m pip install -r requirements.txt
+
+    - name: Compile Check
+      run: |
+        cd app
+        python3 -m py_compile app.py
 
 
   sast:
@@ -55,13 +79,18 @@ jobs:
     needs: build
 
     steps:
-      - uses: actions/checkout@v3
+    - uses: actions/checkout@v3
 
-      - name: Install Bandit
-        run: python3 -m pip install bandit
+    - name: Ensure Bandit Installed
+      run: |
+        if ! command -v bandit &> /dev/null; then
+          python3 -m pip install bandit
+        else
+          echo "Bandit already installed"
+        fi
 
-      - name: Run SAST (fail only on HIGH)
-        run: bandit -r app/ -lll
+    - name: Run SAST (fail only on HIGH)
+      run: bandit -r app/ -lll
 
 
   docker:
@@ -69,16 +98,16 @@ jobs:
     needs: sast
 
     steps:
-      - uses: actions/checkout@v3
+    - uses: actions/checkout@v3
 
-      - name: Login to DockerHub
-        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+    - name: Login to DockerHub
+      run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
-      - name: Build Docker Image
-        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/github-demo:latest .
+    - name: Build Docker Image
+      run: docker build -t ${{ secrets.DOCKER_USERNAME }}/github-demo:latest .
 
-      - name: Push Docker Image
-        run: docker push ${{ secrets.DOCKER_USERNAME }}/github-demo:latest
+    - name: Push Docker Image
+      run: docker push ${{ secrets.DOCKER_USERNAME }}/github-demo:latest
 
 
   container-scan:
@@ -86,12 +115,12 @@ jobs:
     needs: docker
 
     steps:
-      - uses: actions/checkout@v3
+    - uses: actions/checkout@v3
 
-      - name: Scan Image with Trivy
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: "${{ secrets.DOCKER_USERNAME }}/github-demo:latest"
+    - name: Scan Image with Trivy
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: "${{ secrets.DOCKER_USERNAME }}/github-demo:latest"
 
 
   monitoring-setup:
@@ -99,38 +128,26 @@ jobs:
     needs: container-scan
 
     steps:
-      - uses: actions/checkout@v3
+    - uses: actions/checkout@v3
 
-      # ----------------------------
-      # Kubernetes Config
-      # ----------------------------
-      - name: Setup kubeconfig
-        run: |
-          echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > kubeconfig
-          chmod 600 kubeconfig
-          echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
+    - name: Setup kubeconfig
+      run: |
+        echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > kubeconfig
+        chmod 600 kubeconfig
+        echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
 
-      - name: Verify Cluster Connectivity
-        run: kubectl get nodes
+    - name: Verify Cluster Connectivity
+      run: kubectl get nodes
 
-      # ----------------------------
-      # Install Helm if Missing
-      # ----------------------------
-      - name: Install Helm
-        run: |
-          if ! command -v helm &> /dev/null; then
-            curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          fi
+    - name: Install Prometheus & Grafana (Idempotent)
+      run: |
+        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+        helm repo update
+        helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+          --namespace monitoring --create-namespace
 
-      - name: Install Prometheus & Grafana
-        run: |
-          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
-          helm repo update
-          helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
-            --namespace monitoring --create-namespace
-
-      - name: Wait for Monitoring Pods
-        run: kubectl wait --for=condition=Ready pod --all -n monitoring --timeout=300s
+    - name: Wait for Monitoring Pods
+      run: kubectl wait --for=condition=Ready pod --all -n monitoring --timeout=300s
 
 
   deploy:
@@ -138,18 +155,18 @@ jobs:
     needs: monitoring-setup
 
     steps:
-      - uses: actions/checkout@v3
+    - uses: actions/checkout@v3
 
-      - name: Setup kubeconfig
-        run: |
-          echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > kubeconfig
-          chmod 600 kubeconfig
-          echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
+    - name: Setup kubeconfig
+      run: |
+        echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > kubeconfig
+        chmod 600 kubeconfig
+        echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
 
-      - name: Deploy Application
-        run: |
-          kubectl apply -f k8s/
-          kubectl rollout status deployment/github-demo
+    - name: Deploy Application
+      run: |
+        kubectl apply -f k8s/
+        kubectl rollout status deployment/github-demo
 
 
   dast:
@@ -157,10 +174,10 @@ jobs:
     needs: deploy
 
     steps:
-      - uses: actions/checkout@v3
+    - uses: actions/checkout@v3
 
-      - name: Run OWASP ZAP Baseline Scan
-        run: |
-          docker run -t owasp/zap2docker-stable zap-baseline.py \
-            -t http://<NODE-IP>:30007 \
-            -r report.html
+    - name: Run OWASP ZAP Baseline Scan
+      run: |
+        docker run -t owasp/zap2docker-stable zap-baseline.py \
+          -t http://192.168.56.102:30007 \
+          -r report.html
