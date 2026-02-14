@@ -13,31 +13,14 @@ jobs:
       - uses: actions/checkout@v3
 
       # -----------------------------
-      # Install Required System Tools
-      # -----------------------------
-      - name: Ensure System Packages Installed
-        run: |
-          sudo apt update
-          sudo apt install -y python3 python3-venv python3-pip docker.io curl
-
-      - name: Fix Docker Permissions
-        run: |
-          sudo usermod -aG docker $USER || true
-          sudo systemctl restart docker || true
-
-      - name: Verify Tools
-        run: |
-          python3 --version
-          docker --version
-
-      # -----------------------------
       # Python Virtual Environment
       # -----------------------------
-      - name: Create Virtual Environment & Install Dependencies
+      - name: Create Virtual Environment
+        run: python3 -m venv venv
+
+      - name: Install Dependencies
         run: |
-          python3 -m venv venv
           source venv/bin/activate
-          pip install --upgrade pip
           pip install -r app/requirements.txt
 
       - name: Compile Check
@@ -53,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Run SAST with Bandit (inside venv)
+      - name: Run SAST with Bandit
         run: |
           python3 -m venv venv
           source venv/bin/activate
@@ -98,9 +81,6 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      # -----------------------------
-      # Kubernetes Config Setup
-      # -----------------------------
       - name: Setup kubeconfig
         run: |
           echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > kubeconfig
@@ -110,16 +90,7 @@ jobs:
       - name: Verify Cluster Connectivity
         run: kubectl get nodes
 
-      # -----------------------------
-      # Install Helm if Missing
-      # -----------------------------
-      - name: Ensure Helm Installed
-        run: |
-          if ! command -v helm &> /dev/null; then
-            curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          fi
-
-      - name: Install Prometheus & Grafana
+      - name: Install / Upgrade Monitoring Stack
         run: |
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
           helm repo update
