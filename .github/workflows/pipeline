@@ -1,0 +1,163 @@
+name: DevSecOps Pipeline with Monitoring
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+
+  build:
+    runs-on: [self-hosted, Linux, X64]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      # -----------------------------
+      # Install Required System Tools
+      # -----------------------------
+      - name: Ensure System Packages Installed
+        run: |
+          sudo apt update
+          sudo apt install -y python3 python3-venv python3-pip docker.io curl
+
+      - name: Fix Docker Permissions
+        run: |
+          sudo usermod -aG docker $USER || true
+          sudo systemctl restart docker || true
+
+      - name: Verify Tools
+        run: |
+          python3 --version
+          docker --version
+
+      # -----------------------------
+      # Python Virtual Environment
+      # -----------------------------
+      - name: Create Virtual Environment & Install Dependencies
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
+          pip install -r app/requirements.txt
+
+      - name: Compile Check
+        run: |
+          source venv/bin/activate
+          python -m py_compile app/app.py
+
+
+  sast:
+    runs-on: [self-hosted, Linux, X64]
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Run SAST with Bandit (inside venv)
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install bandit
+          bandit -r app/ -lll
+
+
+  docker:
+    runs-on: [self-hosted, Linux, X64]
+    needs: sast
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Login to DockerHub
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Build Docker Image
+        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/github-demo:latest .
+
+      - name: Push Docker Image
+        run: docker push ${{ secrets.DOCKER_USERNAME }}/github-demo:latest
+
+
+  container-scan:
+    runs-on: [self-hosted, Linux, X64]
+    needs: docker
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Scan Image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ secrets.DOCKER_USERNAME }}/github-demo:latest"
+
+
+  monitoring-setup:
+    runs-on: [self-hosted, Linux, X64]
+    needs: container-scan
+
+    steps:
+      - uses: actions/checkout@v3
+
+      # -----------------------------
+      # Kubernetes Config Setup
+      # -----------------------------
+      - name: Setup kubeconfig
+        run: |
+          echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > kubeconfig
+          chmod 600 kubeconfig
+          echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
+
+      - name: Verify Cluster Connectivity
+        run: kubectl get nodes
+
+      # -----------------------------
+      # Install Helm if Missing
+      # -----------------------------
+      - name: Ensure Helm Installed
+        run: |
+          if ! command -v helm &> /dev/null; then
+            curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          fi
+
+      - name: Install Prometheus & Grafana
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+          helm repo update
+          helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+            --namespace monitoring --create-namespace
+
+      - name: Wait for Monitoring Pods
+        run: kubectl wait --for=condition=Ready pod --all -n monitoring --timeout=300s
+
+
+  deploy:
+    runs-on: [self-hosted, Linux, X64]
+    needs: monitoring-setup
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup kubeconfig
+        run: |
+          echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > kubeconfig
+          chmod 600 kubeconfig
+          echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
+
+      - name: Deploy Application
+        run: |
+          kubectl apply -f k8s/
+          kubectl rollout status deployment/github-demo
+
+
+  dast:
+    runs-on: [self-hosted, Linux, X64]
+    needs: deploy
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Run OWASP ZAP Baseline Scan
+        run: |
+          docker run -t owasp/zap2docker-stable zap-baseline.py \
+            -t http://<NODE-IP>:30007 \
+            -r report.html
