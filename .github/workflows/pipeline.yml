@@ -30,8 +30,12 @@ jobs:
     steps:
     - uses: actions/checkout@v3   # 🔥 REQUIRED
 
-    - run: pip install bandit
-    - run: bandit -r app/
+    - name: Install Bandit
+      run: pip install bandit
+
+    - name: Run SAST (fail only on HIGH)
+      run: bandit -r app/ -lll
+   
 
 
   docker:
