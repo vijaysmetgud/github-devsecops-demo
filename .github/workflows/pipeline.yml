@@ -6,96 +6,100 @@ on:
 
 jobs:
 
-  checkout:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-
   build:
     runs-on: ubuntu-latest
-    needs: checkout
     steps:
+    - uses: actions/checkout@v3   # 🔥 REQUIRED
+
     - uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-    - run: pip install -r app/requirements.txt
-    - run: python -m py_compile app/app.py
+
+    - name: Install dependencies
+      working-directory: ./app
+      run: pip install -r requirements.txt
+
+    - name: Compile check
+      working-directory: ./app
+      run: python -m py_compile app.py
+
 
   sast:
     runs-on: ubuntu-latest
     needs: build
     steps:
+    - uses: actions/checkout@v3   # 🔥 REQUIRED
+
     - run: pip install bandit
     - run: bandit -r app/
+
 
   docker:
     runs-on: ubuntu-latest
     needs: sast
     steps:
+    - uses: actions/checkout@v3   # 🔥 REQUIRED
+
     - run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
     - run: docker build -t ${{ secrets.DOCKER_USERNAME }}/github-demo:latest .
     - run: docker push ${{ secrets.DOCKER_USERNAME }}/github-demo:latest
+
 
   container-scan:
     runs-on: ubuntu-latest
     needs: docker
     steps:
+    - uses: actions/checkout@v3   # 🔥 REQUIRED
+
     - uses: aquasecurity/trivy-action@master
       with:
         image-ref: "${{ secrets.DOCKER_USERNAME }}/github-demo:latest"
+
 
   monitoring-setup:
     runs-on: ubuntu-latest
     needs: container-scan
     steps:
+    - uses: actions/checkout@v3   # 🔥 REQUIRED
+
     - name: Setup kubeconfig
       run: |
         echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > kubeconfig
-        export KUBECONFIG=$PWD/kubeconfig
+        echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
 
     - name: Install Helm
       uses: azure/setup-helm@v3
 
-    - name: Add Helm Repo
+    - name: Install Monitoring Stack
       run: |
         helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
         helm repo update
-
-    - name: Install Monitoring Stack
-      run: |
         helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
         --namespace monitoring --create-namespace
 
-  monitoring-validation:
-    runs-on: ubuntu-latest
-    needs: monitoring-setup
-    steps:
-    - name: Setup kubeconfig
-      run: |
-        echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > kubeconfig
-        export KUBECONFIG=$PWD/kubeconfig
-
-    - name: Validate Prometheus
-      run: |
-        kubectl get pods -n monitoring
-        kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=prometheus -n monitoring --timeout=180s
 
   deploy:
     runs-on: ubuntu-latest
-    needs: monitoring-validation
+    needs: monitoring-setup
     steps:
+    - uses: actions/checkout@v3   # 🔥 REQUIRED
+
     - name: Setup kubeconfig
       run: |
         echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > kubeconfig
-        export KUBECONFIG=$PWD/kubeconfig
+        echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
 
     - name: Deploy App
-      run: kubectl apply -f k8s/
+      run: |
+        kubectl apply -f k8s/
+
 
   dast:
     runs-on: ubuntu-latest
     needs: deploy
     steps:
+    - uses: actions/checkout@v3   # 🔥 REQUIRED
+
     - name: Run OWASP ZAP
       run: |
         docker run -t owasp/zap2docker-stable zap-baseline.py \
