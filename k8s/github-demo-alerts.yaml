@@ -1,0 +1,29 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: github-demo-alerts
+  namespace: monitoring
+spec:
+  groups:
+  - name: github-demo.rules
+    rules:
+    - alert: HighCPUUsage
+      expr: |
+        sum(rate(container_cpu_usage_seconds_total{container="github-demo"}[2m])) * 100 > 70
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High CPU usage on github-demo"
+        description: "CPU usage above 70% for more than 2 minutes."
+
+    - alert: HighMemoryUsage
+      expr: |
+        (container_memory_usage_bytes{container="github-demo"} 
+        / container_spec_memory_limit_bytes{container="github-demo"}) * 100 > 80
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: "High Memory usage on github-demo"
+
