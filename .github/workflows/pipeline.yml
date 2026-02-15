@@ -88,8 +88,8 @@ jobs:
           echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
 
       - name: Verify Cluster Connectivity
-        run: kubectl get nodes
-
+        run: kubectl --kubeconfig=kubeconfig get nodes
+  
       - name: Install / Upgrade Monitoring Stack
         run: |
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
@@ -116,8 +116,8 @@ jobs:
 
       - name: Deploy Application
         run: |
-          kubectl apply -f k8s/
-          kubectl rollout status deployment/github-demo
+          kubectl --kubeconfig=kubeconfig apply -f k8s/
+          kubectl --kubeconfig=kubeconfig rollout status deployment/github-demo
 
 
   dast:
