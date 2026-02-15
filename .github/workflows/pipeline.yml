@@ -119,7 +119,6 @@ jobs:
           kubectl --kubeconfig=kubeconfig apply -f k8s/
           kubectl --kubeconfig=kubeconfig rollout status deployment/github-demo
 
-
   dast:
     runs-on: [self-hosted, Linux, X64]
     needs: deploy
@@ -129,6 +128,16 @@ jobs:
 
       - name: Run OWASP ZAP Baseline Scan
         run: |
-          docker run -t zaproxy/zap-stable zap-baseline.py \
+          docker run --rm \
+            -v $(pwd):/zap/wrk:rw \
+            zaproxy/zap-stable zap-baseline.py \
             -t http://192.168.56.101:30007 \
-            -r report.html
+            -r zap-report.html \
+            -I
+
+  
+      - name: Upload ZAP Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: zap-report
+          path: zap-report.html
