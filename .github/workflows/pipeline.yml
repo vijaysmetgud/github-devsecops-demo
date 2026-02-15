@@ -130,5 +130,5 @@ jobs:
       - name: Run OWASP ZAP Baseline Scan
         run: |
           docker run -t owasp/zap2docker-stable zap-baseline.py \
-            -t http://<NODE-IP>:30007 \
+            -t http://192.168.56.101:30007 \
             -r report.html
