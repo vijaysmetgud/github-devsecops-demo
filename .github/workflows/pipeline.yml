@@ -90,17 +90,22 @@ jobs:
       - name: Verify Cluster Connectivity
         run: kubectl --kubeconfig=kubeconfig get nodes
   
-      - name: Install / Upgrade Monitoring Stack
-        run: |
-          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
-          helm repo update
-          helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
-            --namespace monitoring --create-namespace
+       - name: Install / Upgrade Monitoring Stack
+         run: |
+           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+           helm repo update
 
-      - name: Wait for Monitoring Pods
-        run: kubectl wait --for=condition=Ready pod --all -n monitoring --timeout=300s
-
-
+           helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+             --namespace monitoring \
+             --create-namespace \
+             --set grafana.service.type=NodePort \
+             --set grafana.service.nodePort=32536 \
+             --set prometheus.service.type=NodePort \
+             --set prometheus.service.nodePort=32115
+      
+       - name: Wait for Monitoring Pods
+         run: kubectl wait --for=condition=Ready pod --all -n monitoring --timeout=300s
+      
   deploy:
     runs-on: [self-hosted, Linux, X64]
     needs: monitoring-setup
